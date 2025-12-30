@@ -535,7 +535,7 @@ class QwenImageControlNetInpaintPipeline(DiffusionPipeline, QwenImageLoraLoaderM
         latents_std = 1.0 / ms.tensor(self.vae.config.latents_std).view(1, self.vae.config.z_dim, 1, 1, 1)
 
         # Encode to latents
-        image_latents = self.vae.encode(masked_image.to(self.vae.dtype)).latent_dist.sample()
+        image_latents = self.vae.diag_gauss_dist.sample(self.vae.encode(masked_image.to(self.vae.dtype))[0])
         image_latents = (image_latents - latents_mean) * latents_std
         image_latents = image_latents.to(dtype)  # Size([1, 16, 1, height_ori//8, width_ori//8])
 
