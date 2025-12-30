@@ -617,18 +617,8 @@ class QwenImagePipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
             negative_prompt_embeds_mask.sum(dim=1).tolist() if negative_prompt_embeds_mask is not None else None
         )
 
-        import gc
-
-        del self.text_encoder
-        gc.collect()
-        ms.hal.empty_cache()
-
         # 6. Denoising loop
         self.scheduler.set_begin_index(0)
-        print(ms.Tensor.any(prompt_embeds.isinf()), ms.Tensor.any(prompt_embeds.isinf()))
-        prompt_embeds = ms.tensor(
-            np.load("/home/dxw/mindone/examples/diffusers/qwenimage/app_fp16/prompt_embeds.npy"), dtype=ms.float16
-        )
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
                 if self.interrupt:

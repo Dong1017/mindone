@@ -9,17 +9,13 @@ from flask_restful import Api, Resource
 
 import mindspore as ms
 import mindspore.mint.distributed as dist
-import mindspore.nn as nn
 from mindspore.communication import GlobalComm
 
-from mindone.diffusers import QwenImagePipeline
 from mindone.trainers.zero import prepare_network
 
-DTYPE = {
-    "fp16": ms.float16,
-    "fp32": ms.float32,
-    "bf16": ms.bfloat16,
-}
+from models_fp16.autoencoder_kl_qwenimage import AutoencoderKLQwenImage
+from models_fp16.transformer_qwenimage import QwenImageTransformer2DModel
+from models_fp16.pipeline_qwenimage import QwenImagePipeline
 
 
 def parsed_args():
@@ -32,15 +28,31 @@ def parsed_args():
 
 class QwenImageAppPipeline(Resource):
     def __init__(self, model_id):
-        kwargs = dict(
-            mindspore_dtype=ms.bfloat16,
+        # perpare components with given dtype
+        transformer = QwenImageTransformer2DModel.from_pretrained(
+            model_id,
+            subfolder="transformer",
+            mindspore_dtype=ms.float32
         )
-        with nn.no_init_parameters():
-            self.model = QwenImagePipeline.from_pretrained(model_id, **kwargs)
+        vae = AutoencoderKLQwenImage.from_pretrained(
+            model_id,
+            subfolder="vae",
+            mindspore_dtype=ms.float16
+        )
+        self.model = QwenImagePipeline.from_pretrained(
+            model_id,
+            transformer=transformer,
+            vae=vae,
+            mindspore_dtype=ms.float16,
+        )
 
         # apply zero3
         shard_fn = partial(prepare_network, zero_stage=3, optimizer_parallel_group=GlobalComm.WORLD_COMM_GROUP)
         self.model.transformer = shard_fn(self.model.transformer)
+        self.model.text_encoder = shard_fn(self.model.text_encoder)
+
+        # wait for all NPUs
+        dist.barrier()
 
         print("Loaded QwenImage pipeline")
 

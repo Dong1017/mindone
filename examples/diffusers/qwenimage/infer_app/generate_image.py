@@ -26,27 +26,29 @@ def call_api_gen(url):
     return _fn
 
 
+port = 5000
+worker_num = 4
+
+# 动态生成 URL 和管道
+urls = [
+    f"http://127.0.0.1:{port + i}/qwenimage-api"
+    for i in range(worker_num)
+]
+pipes = [call_api_gen(url) for url in urls]
+
+# ✅ 修改：把 prompt 作为参数传入
+async def run_all(pipes, prompt):
+    results = await asyncio.gather(
+        *[pipe(prompt) for pipe in pipes]
+    )
+    return results
+
 # 推理参数
-prompt = "A beautiful sunset over the mountains"
-
-# 设置两个服务端 URL
-url1 = "http://127.0.0.1:5000/qwenimage-api"
-url2 = "http://127.0.0.1:5001/qwenimage-api"
-
-# 创建两个管道
-pipe1 = call_api_gen(url1)
-pipe2 = call_api_gen(url2)
-
-
-# 并行发送请求
-async def run_both():
-    # 同时执行两个异步任务
-    result1, result2 = await asyncio.gather(pipe1(prompt), pipe2(prompt))
-    return result1, result2
-
+# prompt = "A beautiful sunset over the mountains"
+prompt = '''A coffee shop entrance features a chalkboard sign reading "Qwen Coffee 😊 $2 per cup," with a neon light beside it displaying "通义千问". Next to it hangs a poster showing a beautiful Chinese woman, and beneath the poster is written "π≈3.1415926-53589793-23846264-33832795-02384197".'''
 
 # 执行并获取结果
-results = asyncio.run(run_both())
+results = asyncio.run(run_all(pipes, prompt))
 
 # 保存图像, 所有图像都是相同的, 保存第一个即可
 results[0].save("generated_image.png")
