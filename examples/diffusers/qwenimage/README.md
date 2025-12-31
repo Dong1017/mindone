@@ -16,6 +16,7 @@ This repository provides the LoRA finetune codes of [Qwen-Image](https://arxiv.o
 ## 📑 Todo List
 - Qwen-Image (Text-to-Image Model)
   - [x] LoRA finetune
+  - [x] Inference server support
 
 
 ## 📦 Requirements
@@ -54,4 +55,22 @@ python finetune_lora_with_mindspore_trainer.py \
     --learning_rate 1e-5 \
     --save_strategy no \
     --bf16
+```
+
+### Run Qwen-Image Inference Server
+
+Try the inference example:
+```bash
+sh run_infer.sh
+```
+
+Start the inference server:
+```bash
+sh run_api.sh
+```
+Note: Some codes in api.py are commented dut to security risks. You need to manually decomment it before running.
+
+When the server is ready, showing "* Running on http://...", try the example to call and get result!
+```bash
+python example_gen_from_server.py
 ```

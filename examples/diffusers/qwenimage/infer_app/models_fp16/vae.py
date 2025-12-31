@@ -174,7 +174,7 @@ class QwenImageCausalConv2dFromConv3d(nn.Cell):
         # cache_x is never used here
         # default shape of image is [B, C, 1, H, W]
         x = mint.nn.functional.pad(x, list(self._padding))
-        print("after padding: ", x.shape)
+
         outputs = []
         # in the case that time padding shape is equal to the kernel size
         n = len(self.weight_conv2d_list)
@@ -297,7 +297,6 @@ class QwenImageResample(nn.Cell):
     def construct(self, x, feat_cache=None, feat_idx=[0]):
         b, c, t, h, w = x.shape
         if self.mode == "upsample3d":
-            print(self.mode)
             _time_conv_native = QwenImageCausalConv2dFromConv3d(
                 self.dim,
                 self.dim * 2,

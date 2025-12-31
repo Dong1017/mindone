@@ -75,16 +75,13 @@ class QwenImageAPI(Resource):
             # ========                              The first place.                                ==========
             # ================================================================================================
             #
-            import pickle
-
-            from flask import Response, request
-
-            feature = pickle.loads(request.get_data())
-            # feature["api"] = "qwenimage"
-            feature = {k: v for k, v in feature.items() if v is not None}
-            image = self.qwenimage_pipeline.generate(**feature)
-            response = pickle.dumps(image)
-            return Response(response)
+            # import pickle
+            # from flask import Response, request
+            # feature = pickle.loads(request.get_data())
+            # feature = {k: v for k, v in feature.items() if v is not None}
+            # image = self.qwenimage_pipeline.generate(**feature)
+            # response = pickle.dumps(image)
+            # return Response(response)
             #
             # ================================================================================================
 
