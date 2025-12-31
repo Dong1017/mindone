@@ -68,7 +68,6 @@ Start the inference server:
 ```bash
 sh run_api.sh
 ```
-Note: Some codes in api.py are commented due to security risks. You need to manually decomment it before running.
 
 When the server is ready, showing "* Running on http://...", try the example to call and get results!
 ```bash
