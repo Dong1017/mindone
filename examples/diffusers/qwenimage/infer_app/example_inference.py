@@ -24,9 +24,10 @@ def parse_args():
     parser.add_argument(
         "--output_path",
         type=str,
-        default="test_multi_npu_qwenimage_base_fp32.png",
+        default="qwenimage_inference_output.png",
         help="The output path where the model prediction will be written.",
     )
+    parser.add_argument("--seed", type=int, default=42, help="A seed for reproducible generation.")
 
     return parser.parse_args()
 
@@ -69,11 +70,11 @@ def main():
         negative_prompt=negative_prompt,
         num_inference_steps=50,
         true_cfg_scale=4.0,
-        generator=np.random.Generator(np.random.PCG64(seed=42)),
+        generator=np.random.Generator(np.random.PCG64(seed=args.seed)),
     )[0][0]
 
     if local_rank == 0:
-        image.save("qwenimage_inference_output.png")
+        image.save(args.output_path)
 
 
 if __name__ == "__main__":

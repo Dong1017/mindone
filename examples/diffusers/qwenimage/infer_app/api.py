@@ -1,10 +1,12 @@
 import argparse
+import base64
 import os
 import threading
 from functools import partial
+from io import BytesIO
 
 import numpy as np
-from flask import Blueprint, Flask
+from flask import Blueprint, Flask, request
 from flask_restful import Api, Resource
 from models_fp16.pipeline import QwenImagePipeline
 from models_fp16.transformer import QwenImageTransformer2DModel
@@ -20,7 +22,7 @@ from mindone.trainers.zero import prepare_network
 def parsed_args():
     parser = argparse.ArgumentParser(description="QwenImage API Functions")
     parser.add_argument("--model_dir", type=str)
-    parser.add_argument("--port", type=str, default=None)  # '8080', default '5000'
+    parser.add_argument("--port", type=int, default=5000)
     args = parser.parse_args()
     return args
 
@@ -49,13 +51,14 @@ class QwenImageAppPipeline(Resource):
 
         print("Loaded QwenImage pipeline")
 
-    def generate(self, prompts, num_inference_steps, *args, **kwargs):
+    def generate(self, prompts, *args, **kwargs):
+        seed = kwargs.get("seed", 42)
         image = self.model(
             prompts,
-            negative_prompt=" ",
-            num_inference_steps=num_inference_steps,
-            true_cfg_scale=4.0,
-            generator=np.random.Generator(np.random.PCG64(seed=42)),
+            negative_prompt=kwargs.get("negative_prompt", " "),
+            num_inference_steps=kwargs.get("num_inference_steps", 50),
+            true_cfg_scale=kwargs.get("true_cfg_scale", 4.0),
+            generator=np.random.Generator(np.random.PCG64(seed=seed)),
         )[0][0]
 
         return image
@@ -68,27 +71,33 @@ class QwenImageAPI(Resource):
     def __init__(self, qwenimage_pipeline):
         self.qwenimage_pipeline = qwenimage_pipeline
 
-    def get(self):
+    def post(self):
         with lock:
-            # ==================== We comment the follow code, because security risks.  ======================
-            # ===========           You need to manually decomment it before running.            =============
-            # ========                              The first place.                                ==========
-            # ================================================================================================
-            #
-            # import pickle
-            # from flask import Response, request
-            # feature = pickle.loads(request.get_data())
-            # feature = {k: v for k, v in feature.items() if v is not None}
-            # image = self.qwenimage_pipeline.generate(**feature)
-            # response = pickle.dumps(image)
-            # return Response(response)
-            #
-            # ================================================================================================
+            try:
+                data = request.get_json()
 
-            raise NotImplementedError(
-                "There are some security risks from pickle here. \n"
-                "You need to confirm it and manually decomment the code above before running them."
-            )
+                if not data:
+                    return {"error": "No data provided"}, 400
+
+                feature = {}
+                allowed_keys = {"prompts", "num_inference_steps", "negative_prompt", "true_cfg_scale"}
+                for key, value in data.items():
+                    if key in allowed_keys and value is not None:
+                        feature[key] = value
+
+                image = self.qwenimage_pipeline.generate(**feature)
+
+                buffered = BytesIO()
+                image.save(buffered, format="PNG")
+                buffered.seek(0)
+                img_str = base64.b64encode(buffered.getvalue()).decode()
+
+                response_data = {"status": "success", "image_data": img_str, "format": "png"}
+
+                return response_data, 200
+
+            except Exception as e:
+                return {"error": str(e)}, 500
 
 
 class RemoteServer(object):

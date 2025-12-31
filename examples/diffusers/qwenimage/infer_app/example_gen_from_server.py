@@ -1,38 +1,44 @@
 import asyncio
+import base64
+from io import BytesIO
+
+import aiohttp
+from PIL import Image
 
 
 # calling function
 def call_api_gen(url):
-    async def _fn(samples, *args, **kwargs):
-        # ==================== We comment the follow code, because security risks.  ======================
-        # ===========           You need to manually decomment it before running.            =============
-        # ========                              The first place.                                ==========
-        # ================================================================================================
-        #
-        # import aiohttp
-        # import pickle
-        # async with aiohttp.ClientSession() as sess:
-        #     data = {
-        #         "prompts": samples,
-        #         "num_inference_steps": 50,
-        #         "true_cfg_scale": 4.0,
-        #     }
-        #     data_bytes = pickle.dumps(data)
-        #     timeout = 15000  # bigger than the estimated inference time cost (second)
-        #     async with sess.get(url, data=data_bytes, timeout=timeout) as response:
-        #         result = bytearray()
-        #         while not response.content.at_eof():
-        #             chunk = await response.content.read(1024)
-        #             result += chunk
-        #         response_data = pickle.loads(result)
-        # return response_data
-        #
-        # ================================================================================================
+    try:
 
-        raise NotImplementedError(
-            "There are some security risks from pickle here. \n"
-            "You need to confirm it and manually decomment the code above before running them."
-        )
+        async def _fn(samples, *args, **kwargs):
+            async with aiohttp.ClientSession() as sess:
+                data = {
+                    "prompts": samples,
+                    "num_inference_steps": kwargs.get("num_inference_steps", 50),
+                    "negative_prompt": kwargs.get("negative_prompt", " "),
+                    "true_cfg_scale": kwargs.get("true_cfg_scale", 4.0),
+                }
+
+                timeout = aiohttp.ClientTimeout(total=15000)
+
+                async with sess.post(url, json=data, timeout=timeout) as response:
+                    if response.status == 200:
+                        result = await response.json()
+
+                        if result.get("status") == "success":
+                            if "image_data" in result:
+                                img_data = base64.b64decode(result["image_data"])
+                                return Image.open(BytesIO(img_data))
+                            else:
+                                raise Exception("No image data in response")
+                        else:
+                            raise Exception(f"API error: {result.get('error', 'Unknown error')}")
+                    else:
+                        raise Exception(f"HTTP {response.status}")
+
+    except Exception as e:
+        print(f"Error calling API: {e}")
+        raise
 
     return _fn
 

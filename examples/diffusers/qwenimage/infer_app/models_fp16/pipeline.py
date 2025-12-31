@@ -655,7 +655,7 @@ class QwenImagePipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
 
                     cond_norm = mint.norm(noise_pred, dim=-1, keepdim=True)
                     noise_norm = mint.norm(comb_pred, dim=-1, keepdim=True)
-                    noise_pred = comb_pred * (cond_norm / noise_norm)
+                    noise_pred = comb_pred * (cond_norm / (noise_norm + 1e-6))
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents_dtype = latents.dtype
