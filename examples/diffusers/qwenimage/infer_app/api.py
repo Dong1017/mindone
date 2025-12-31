@@ -6,16 +6,15 @@ from functools import partial
 import numpy as np
 from flask import Blueprint, Flask
 from flask_restful import Api, Resource
+from models_fp16.pipeline import QwenImagePipeline
+from models_fp16.transformer import QwenImageTransformer2DModel
+from models_fp16.vae import AutoencoderKLQwenImage
 
 import mindspore as ms
 import mindspore.mint.distributed as dist
 from mindspore.communication import GlobalComm
 
 from mindone.trainers.zero import prepare_network
-
-from models_fp16.autoencoder_kl_qwenimage import AutoencoderKLQwenImage
-from models_fp16.transformer_qwenimage import QwenImageTransformer2DModel
-from models_fp16.pipeline_qwenimage import QwenImagePipeline
 
 
 def parsed_args():
@@ -30,15 +29,9 @@ class QwenImageAppPipeline(Resource):
     def __init__(self, model_id):
         # perpare components with given dtype
         transformer = QwenImageTransformer2DModel.from_pretrained(
-            model_id,
-            subfolder="transformer",
-            mindspore_dtype=ms.float32
+            model_id, subfolder="transformer", mindspore_dtype=ms.float32
         )
-        vae = AutoencoderKLQwenImage.from_pretrained(
-            model_id,
-            subfolder="vae",
-            mindspore_dtype=ms.float16
-        )
+        vae = AutoencoderKLQwenImage.from_pretrained(model_id, subfolder="vae", mindspore_dtype=ms.float16)
         self.model = QwenImagePipeline.from_pretrained(
             model_id,
             transformer=transformer,

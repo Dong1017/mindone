@@ -31,10 +31,10 @@ from mindone.diffusers.pipelines.qwenimage.pipeline_output import QwenImagePipel
 from mindone.diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from mindone.diffusers.utils import logging
 from mindone.diffusers.utils.mindspore_utils import randn_tensor
-from mindone.transformers import Qwen2_5_VLForConditionalGeneration
 
-from .autoencoder_kl_qwenimage import AutoencoderKLQwenImage
-from .transformer_qwenimage import QwenImageTransformer2DModel
+from .text_encoder import Qwen2_5_VLForConditionalGeneration
+from .transformer import QwenImageTransformer2DModel
+from .vae import AutoencoderKLQwenImage
 
 XLA_AVAILABLE = False
 
