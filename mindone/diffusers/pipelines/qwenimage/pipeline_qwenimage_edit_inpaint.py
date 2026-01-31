@@ -991,11 +991,11 @@ class QwenImageEditInpaintPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
                 # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
                 timestep = t.expand((latents.shape[0],)).to(latents.dtype)
                 noise_pred = self.transformer(
-                    hidden_states=latent_model_input,
+                    hidden_states=latent_model_input.to(self.transformer.dtype),
                     timestep=timestep / 1000,
                     guidance=guidance,
                     encoder_hidden_states_mask=prompt_embeds_mask,
-                    encoder_hidden_states=prompt_embeds,
+                    encoder_hidden_states=prompt_embeds.to(self.transformer.dtype),
                     img_shapes=img_shapes,
                     txt_seq_lens=txt_seq_lens,
                     attention_kwargs=self.attention_kwargs,
@@ -1005,11 +1005,11 @@ class QwenImageEditInpaintPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
 
                 if do_true_cfg:
                     neg_noise_pred = self.transformer(
-                        hidden_states=latent_model_input,
+                        hidden_states=latent_model_input.to(self.transformer.dtype),
                         timestep=timestep / 1000,
                         guidance=guidance,
                         encoder_hidden_states_mask=negative_prompt_embeds_mask,
-                        encoder_hidden_states=negative_prompt_embeds,
+                        encoder_hidden_states=negative_prompt_embeds.to(self.transformer.dtype),
                         img_shapes=img_shapes,
                         txt_seq_lens=negative_txt_seq_lens,
                         attention_kwargs=self.attention_kwargs,
