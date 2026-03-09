@@ -377,7 +377,13 @@ class DiffusionPipeline(ConfigMixin, PushToHubMixin):
 
     @classmethod
     @validate_hf_hub_args
-    def from_pretrained(cls, pretrained_model_name_or_path: Optional[Union[str, os.PathLike]], **kwargs) -> Self:
+    def from_pretrained(
+        cls, 
+        pretrained_model_name_or_path: Optional[Union[str, os.PathLike]], 
+        zero_stage: Optional[int] = 0,
+        optimizer_parallel_group: Optional[str] = None,
+        **kwargs
+    ) -> Self:
         r"""
         Instantiate a PyTorch diffusion pipeline from pretrained pipeline weights.
 
@@ -695,24 +701,40 @@ class DiffusionPipeline(ConfigMixin, PushToHubMixin):
                     if isinstance(mindspore_dtype, dict)
                     else mindspore_dtype
                 )
-                loaded_sub_model = load_sub_model(
-                    library_name=library_name,
-                    class_name=class_name,
-                    importable_classes=importable_classes,
-                    pipelines=pipelines,
-                    is_pipeline_module=is_pipeline_module,
-                    pipeline_class=pipeline_class,
-                    mindspore_dtype=sub_model_dtype,
-                    model_variants=model_variants,
-                    name=name,
-                    variant=variant,
-                    cached_folder=cached_folder,
-                    use_safetensors=use_safetensors,
-                    dduf_entries=dduf_entries,
-                )
-                logger.info(
-                    f"Loaded {name} as {class_name} from `{name}` subfolder of {pretrained_model_name_or_path}."
-                )
+                
+                # For ZeRO-3, load model without weights first
+                if zero_stage == 3 and name not in ["scheduler", "tokenizer", "image_processor"]:
+                    # Load config only
+                    config_path = os.path.join(cached_folder, name) if os.path.isdir(os.path.join(cached_folder, name)) else cached_folder
+                    config = load_config(config_path, dduf_entries=dduf_entries)
+                    
+                    # Get class object
+                    class_obj, _ = get_class_obj_and_candidates(
+                        library_name, class_name, importable_classes, pipelines, is_pipeline_module, component_name=name, cache_dir=cached_folder
+                    )
+                    
+                    # Build empty model
+                    loaded_sub_model = class_obj(config)
+                else:
+                    # Normal loading for non-ZeRO-3 or non-model components
+                    loaded_sub_model = load_sub_model(
+                        library_name=library_name,
+                        class_name=class_name,
+                        importable_classes=importable_classes,
+                        pipelines=pipelines,
+                        is_pipeline_module=is_pipeline_module,
+                        pipeline_class=pipeline_class,
+                        mindspore_dtype=sub_model_dtype,
+                        model_variants=model_variants,
+                        name=name,
+                        variant=variant,
+                        cached_folder=cached_folder,
+                        use_safetensors=use_safetensors,
+                        dduf_entries=dduf_entries,
+                    )
+                    logger.info(
+                        f"Loaded {name} as {class_name} from `{name}` subfolder of {pretrained_model_name_or_path}."
+                    )
 
             init_kwargs[name] = loaded_sub_model  # UNet(...), # DiffusionSchedule(...)
 
@@ -755,8 +777,64 @@ class DiffusionPipeline(ConfigMixin, PushToHubMixin):
             ):
                 logger.warning(f"Expected types for {kw}: {expected_types[kw]}, got {_get_detailed_type(arg)}.")
 
-        # 11. Instantiate the pipeline
-        model = pipeline_class(**init_kwargs)
+        # 11. Instantiate the pipeline without weights if zero_stage == 3
+        if zero_stage == 3:
+            # Build empty model with config only
+            model = pipeline_class(**init_kwargs)
+            
+            # Apply ZeRO-3 network rewrite
+            if optimizer_parallel_group is None:
+                from mindspore.communication.management import GlobalComm
+                optimizer_parallel_group = GlobalComm.WORLD_COMM_GROUP
+            
+            # Import here to avoid circular imports
+            from mindone.trainers.zero import prepare_network
+            
+            # Apply ZeRO-3 to each component
+            for name, component in model.components.items():
+                if hasattr(component, 'trainable_params'):
+                    try:
+                        setattr(model, name, prepare_network(
+                            component, 
+                            zero_stage=zero_stage, 
+                            optimizer_parallel_group=optimizer_parallel_group
+                        ))
+                    except Exception as e:
+                        logger.warning(f"Failed to apply ZeRO-3 to {name}: {e}")
+            
+            # Load weights after network rewrite
+            for name, (library_name, class_name) in init_dict.items():
+                if name not in ["scheduler", "tokenizer", "image_processor"]:
+                    try:
+                        # Load weights for each component
+                        component = getattr(model, name)
+                        config_path = os.path.join(cached_folder, name) if os.path.isdir(os.path.join(cached_folder, name)) else cached_folder
+                        
+                        # Get load method
+                        from mindone.diffusers.pipelines.pipeline_loading_utils import get_class_obj_and_candidates, _get_load_method
+                        class_obj, _ = get_class_obj_and_candidates(
+                            library_name, class_name, importable_classes, pipelines, is_pipeline_module, component_name=name, cache_dir=cached_folder
+                        )
+                        load_method = _get_load_method(class_obj, importable_classes[class_name][1], is_dduf=dduf_entries is not None)
+                        
+                        # Load weights
+                        loading_kwargs = {"mindspore_dtype": mindspore_dtype}
+                        if dduf_entries:
+                            loading_kwargs["dduf_entries"] = dduf_entries
+                            loaded_weights = load_method(name, **loading_kwargs)
+                        elif os.path.isdir(os.path.join(cached_folder, name)):
+                            loaded_weights = load_method(os.path.join(cached_folder, name), **loading_kwargs)
+                        else:
+                            loaded_weights = load_method(cached_folder, **loading_kwargs)
+                        
+                        # Load weights into component
+                        component.load_state_dict(loaded_weights.state_dict())
+                        logger.info(f"Loaded weights for {name} after ZeRO-3 rewrite.")
+                    except Exception as e:
+                        logger.warning(f"Failed to load weights for {name}: {e}")
+        else:
+            # Normal loading for non-ZeRO-3 cases
+            model = pipeline_class(**init_kwargs)
 
         # 12. Save where the model was instantiated from
         model.register_to_config(_name_or_path=pretrained_model_name_or_path)
