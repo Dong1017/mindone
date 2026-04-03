@@ -91,7 +91,6 @@ from .pag import (
 )
 from .pixart_alpha import PixArtAlphaPipeline, PixArtSigmaPipeline
 from .qwenimage import (
-    QwenImageControlNetPipeline,
     QwenImageEditInpaintPipeline,
     QwenImageEditPipeline,
     QwenImageEditPlusPipeline,
@@ -153,7 +152,6 @@ AUTO_TEXT2IMAGE_PIPELINES_MAPPING = OrderedDict(
         ("cogview4", CogView4Pipeline),
         ("cogview4-control", CogView4ControlPipeline),
         ("qwenimage", QwenImagePipeline),
-        ("qwenimage-controlnet", QwenImageControlNetPipeline),
     ]
 )
 
