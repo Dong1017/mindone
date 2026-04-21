@@ -173,7 +173,7 @@ class TrainOneStepWrapper(nn.Cell):
 
             if is_zero:
                 self.accumulated_grads = optimizer.moments1.clone(prefix="accum_grad", init="zeros")  # split grads
-            elif zero_helper is not None:
+            else:
                 self.accumulated_grads = optimizer.parameters.clone(prefix="accum_grad", init="zeros")
 
             class ScalingLossForGradAccum(nn.Cell):

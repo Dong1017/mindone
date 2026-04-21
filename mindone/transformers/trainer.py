@@ -1174,7 +1174,22 @@ class Trainer:
 
         logger.info("\n\nTraining completed. Do not forget to share your model on huggingface.co/models =)\n\n")
         if args.load_best_model_at_end and self.state.best_model_checkpoint is not None:
-            raise NotImplementedError
+            logger.info(
+                f"Loading best model from {self.state.best_model_checkpoint} "
+                f"(score: {self.state.best_metric})."
+            )
+            best_model_path = os.path.join(self.state.best_model_checkpoint, WEIGHTS_NAME)
+            best_safe_model_path = os.path.join(self.state.best_model_checkpoint, SAFE_WEIGHTS_NAME)
+
+            if os.path.isfile(best_safe_model_path):
+                self._load_from_checkpoint(best_safe_model_path)
+            elif os.path.isfile(best_model_path):
+                self._load_from_checkpoint(best_model_path)
+            else:
+                logger.warning(
+                    f"Could not locate model weights in {self.state.best_model_checkpoint}, "
+                    f"skipping load_best_model_at_end."
+                )
 
         # add remaining tr_loss
         self._total_loss_scalar += tr_loss.item()
@@ -1227,7 +1242,15 @@ class Trainer:
 
         if os.path.isfile(resume_from_checkpoint):
             s_time = time.time()
-            state_dict = ms.load_checkpoint(resume_from_checkpoint)
+            if resume_from_checkpoint.endswith(".safetensors"):
+                try:
+                    state_dict = ms.load_checkpoint(resume_from_checkpoint, format="safetensors")
+                except ValueError:
+                    from mindone.safetensors.mindspore import load_file as safe_load_file
+
+                    state_dict = safe_load_file(resume_from_checkpoint)
+            else:
+                state_dict = ms.load_checkpoint(resume_from_checkpoint)
             m, u = ms.load_param_into_net(model, state_dict)
 
             m = [n for n in m if ("_buffer" not in n) and (".inv_freq" not in n)]
@@ -1550,10 +1573,71 @@ class Trainer:
         return loss / self.args.gradient_accumulation_steps, overflow
 
     def compute_loss(self, model, inputs, return_outputs=False):
-        raise NotImplementedError
+        model.set_train(False)
+        tuple_inputs = self._prepare_inputs_ms(inputs)
+        outputs = model(*tuple_inputs)
+        loss = outputs[0] if isinstance(outputs, (tuple, list)) else getattr(outputs, "loss", None)
+        return (loss, outputs) if return_outputs else loss
 
     def _evaluate(self, trial, ignore_keys_for_eval, skip_scheduler=False):
-        raise NotImplementedError
+        if self.eval_dataset is None:
+            return {}
+
+        eval_dataset = self.eval_dataset
+        data_collator = self.data_collator
+        if is_datasets_available() and isinstance(eval_dataset, datasets.Dataset):
+
+            class MSDataset:
+                def __init__(self, dataset):
+                    self.dataset = dataset
+
+                def __getitem__(self, item):
+                    return self.dataset[int(item)]
+
+                def __len__(self):
+                    return len(self.dataset)
+
+            eval_dataset = self._remove_unused_columns(eval_dataset, description="evaluation")
+            eval_dataset = MSDataset(eval_dataset)
+        else:
+            data_collator = self._get_collator_with_removed_columns(data_collator, description="evaluation")
+
+        ds_init_params = {
+            "num_parallel_workers": self.args.dataloader_num_workers,
+            "python_multiprocessing": False,
+            "num_shards": getattr(self.args, "rank_size", 1),
+            "shard_id": getattr(self.args, "rank", 0),
+            "column_names": "item",
+        }
+        ds_batch_params = {
+            "num_parallel_workers": self.args.dataloader_num_workers,
+            "batch_size": self.args.per_device_eval_batch_size,
+            "per_batch_map": data_collator,
+            "drop_remainder": False,
+        }
+
+        eval_dataloader = ms.dataset.GeneratorDataset(eval_dataset, **ds_init_params)
+        eval_dataloader = eval_dataloader.batch(**ds_batch_params)
+
+        self.model.set_train(False)
+        total_loss = 0.0
+        num_batches = 0
+        for batch in eval_dataloader.create_dict_iterator():
+            inputs = batch["item"]
+            if callable(data_collator):
+                # data_collator may return a dict when used as per_batch_map
+                pass
+            loss = self.compute_loss(self.model, inputs)
+            if loss is not None:
+                total_loss += float(loss.asnumpy() if hasattr(loss, "asnumpy") else loss)
+                num_batches += 1
+
+        self.model.set_train(True)
+
+        metrics = {}
+        if num_batches > 0:
+            metrics["eval_loss"] = round(total_loss / num_batches, 4)
+        return metrics
 
     def _get_output_dir(self, trial):
         if self.hp_search_backend is not None and trial is not None:
