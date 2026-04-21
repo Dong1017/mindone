@@ -97,6 +97,17 @@ class TrainOutput(NamedTuple):
     metrics: Dict[str, float]
 
 
+class MSDatasetWrapper:
+    def __init__(self, dataset: datasets.Dataset):
+        self.dataset = dataset
+
+    def __getitem__(self, item):
+        return self.dataset[int(item)]
+
+    def __len__(self):
+        return len(self.dataset)
+
+
 PREFIX_CHECKPOINT_DIR = "checkpoint"
 _re_checkpoint = re.compile(r"^" + PREFIX_CHECKPOINT_DIR + r"\-(\d+)$")
 
@@ -585,19 +596,8 @@ class Trainer:
         train_dataset = self.train_dataset
         data_collator = self.data_collator
         if is_datasets_available() and isinstance(train_dataset, datasets.Dataset):
-
-            class MSDataset:
-                def __init__(self, dataset: datasets.Dataset):
-                    self.dataset = dataset
-
-                def __getitem__(self, item):
-                    return self.dataset[int(item)]
-
-                def __len__(self):
-                    return len(self.dataset)
-
             train_dataset = self._remove_unused_columns(train_dataset, description="training")
-            train_dataset = MSDataset(train_dataset)
+            train_dataset = MSDatasetWrapper(train_dataset)
 
         else:
             data_collator = self._get_collator_with_removed_columns(data_collator, description="training")
@@ -1245,7 +1245,7 @@ class Trainer:
             if resume_from_checkpoint.endswith(".safetensors"):
                 try:
                     state_dict = ms.load_checkpoint(resume_from_checkpoint, format="safetensors")
-                except ValueError:
+                except (ValueError, TypeError):
                     from mindone.safetensors.mindspore import load_file as safe_load_file
 
                     state_dict = safe_load_file(resume_from_checkpoint)
@@ -1573,10 +1573,13 @@ class Trainer:
         return loss / self.args.gradient_accumulation_steps, overflow
 
     def compute_loss(self, model, inputs, return_outputs=False):
-        model.set_train(False)
         tuple_inputs = self._prepare_inputs_ms(inputs)
         outputs = model(*tuple_inputs)
-        loss = outputs[0] if isinstance(outputs, (tuple, list)) else getattr(outputs, "loss", None)
+        loss = (
+            outputs[0]
+            if isinstance(outputs, (tuple, list))
+            else (outputs.get("loss") if isinstance(outputs, Mapping) else getattr(outputs, "loss", None))
+        )
         return (loss, outputs) if return_outputs else loss
 
     def _evaluate(self, trial, ignore_keys_for_eval, skip_scheduler=False):
@@ -1586,19 +1589,8 @@ class Trainer:
         eval_dataset = self.eval_dataset
         data_collator = self.data_collator
         if is_datasets_available() and isinstance(eval_dataset, datasets.Dataset):
-
-            class MSDataset:
-                def __init__(self, dataset):
-                    self.dataset = dataset
-
-                def __getitem__(self, item):
-                    return self.dataset[int(item)]
-
-                def __len__(self):
-                    return len(self.dataset)
-
             eval_dataset = self._remove_unused_columns(eval_dataset, description="evaluation")
-            eval_dataset = MSDataset(eval_dataset)
+            eval_dataset = MSDatasetWrapper(eval_dataset)
         else:
             data_collator = self._get_collator_with_removed_columns(data_collator, description="evaluation")
 
@@ -1623,11 +1615,7 @@ class Trainer:
         total_loss = 0.0
         num_batches = 0
         for batch in eval_dataloader.create_dict_iterator():
-            inputs = batch["item"]
-            if callable(data_collator):
-                # data_collator may return a dict when used as per_batch_map
-                pass
-            loss = self.compute_loss(self.model, inputs)
+            loss = self.compute_loss(self.model, batch["item"])
             if loss is not None:
                 total_loss += float(loss.asnumpy() if hasattr(loss, "asnumpy") else loss)
                 num_batches += 1
@@ -1636,6 +1624,9 @@ class Trainer:
 
         metrics = {}
         if num_batches > 0:
+            if _is_parallel():
+                total_loss = ops.AllReduce()(Tensor(total_loss, ms.float32)).item()
+                num_batches = int(ops.AllReduce()(Tensor(num_batches, ms.int32)).item())
             metrics["eval_loss"] = round(total_loss / num_batches, 4)
         return metrics
 
